@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+.env
+.env.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+# local JSON database (accounts & progress)
+data/
+
+# hosted (artifact) build output
+artifact-dist/

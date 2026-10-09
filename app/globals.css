@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: "Baloo 2", system-ui, sans-serif;
+  --font-body: "Nunito", system-ui, sans-serif;
+}
+
+html,
+body {
+  background: #fbfaff;
+  color: #1e1b3a;
+  font-family: var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display);
+}
+
+@layer components {
+  /* Chunky, tactile buttons with a pressed state */
+  .btn {
+    @apply relative inline-flex select-none items-center justify-center gap-2 rounded-2xl px-5 py-3 font-display text-base font-bold uppercase tracking-wide transition-all duration-75 disabled:cursor-not-allowed disabled:opacity-50;
+    box-shadow: 0 4px 0 var(--btn-shadow, rgba(0, 0, 0, 0.18));
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(3px);
+    box-shadow: 0 1px 0 var(--btn-shadow, rgba(0, 0, 0, 0.18));
+  }
+  .btn-primary {
+    @apply bg-grape-500 text-white hover:bg-grape-400;
+    --btn-shadow: #5230c9;
+  }
+  .btn-coral {
+    @apply bg-coral-500 text-white hover:bg-coral-400;
+    --btn-shadow: #c73d1c;
+  }
+  .btn-mint {
+    @apply bg-mint-500 text-white hover:bg-mint-400;
+    --btn-shadow: #0f7f50;
+  }
+  .btn-ghost {
+    @apply border-2 border-grape-100 bg-white text-grape-600 hover:bg-grape-50;
+    --btn-shadow: #e9e3ff;
+  }
+  .btn-sun {
+    @apply bg-sun-500 text-ink hover:bg-sun-400;
+    --btn-shadow: #b37e00;
+  }
+  .card {
+    @apply rounded-3xl border-2 border-grape-100 bg-white;
+  }
+  .chip {
+    @apply cursor-pointer select-none rounded-2xl border-2 border-grape-100 bg-white px-4 py-3 text-left font-semibold transition hover:border-grape-200 hover:bg-grape-50;
+    box-shadow: 0 3px 0 #e9e3ff;
+  }
+  .chip-on {
+    @apply border-grape-400 bg-grape-50 text-grape-700;
+    box-shadow: 0 3px 0 #9b82ff;
+  }
+  .input {
+    @apply w-full rounded-2xl border-2 border-grape-100 bg-white px-4 py-3 text-lg outline-none transition focus:border-grape-400;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
