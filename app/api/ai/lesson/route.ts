@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { aiErrorResponse, generate } from "@/lib/server/claude";
 import { lessonPrompt, lessonSchema, systemPrompt } from "@/lib/server/ai";
 import { withCourse } from "@/lib/server/route";
-import { dayKey, dueCards } from "@/lib/game";
+import { createSession } from "@/lib/server/db";
+import { redactExercise, type LessonSessionPayload } from "@/lib/server/grading";
+import { dayKey, dueCards, HEART_MODES } from "@/lib/game";
 import type { LessonMode } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -18,16 +20,23 @@ export async function POST(req: Request) {
     if (["lesson", "legendary", "unit_review", "test_out"].includes(mode) && !unit) {
       return NextResponse.json({ error: "Unknown unit" }, { status: 400 });
     }
+    if (HEART_MODES.includes(mode) && !user.settings.unlimitedHearts && user.stats.hearts <= 0) {
+      return NextResponse.json({ error: "You're out of hearts. Practice to earn more, or turn on unlimited hearts in Settings." }, { status: 403 });
+    }
+    // The browser reports whether it can play audio / record speech for this language.
+    const audioOk = b.audio !== false && user.settings.listening;
+    const speakingPaused = !!user.stats.speakingDisabledUntil && new Date(user.stats.speakingDisabledUntil) > new Date();
+    const micOk = b.mic !== false && audioOk && user.settings.speaking && !speakingPaused;
+
     const today = dayKey(new Date(), user.settings.timezone);
     const due = dueCards(course, today)
       .sort((a, c) => a.box - c.box)
       .slice(0, mode === "words" ? 12 : 6);
-    const known = course.cards.map((c) => c.word);
     const mistakes = course.mistakes.slice(0, mode === "mistakes" ? 12 : 4).map((m) => `"${m.prompt}" → expected "${m.expected}", learner wrote "${m.given}"`);
-    const speakingOff = !user.settings.speaking || (user.stats.speakingDisabledUntil && new Date(user.stats.speakingDisabledUntil) > new Date());
 
     try {
       const result = await generate({
+        userId: user.id,
         system: systemPrompt(course.profile),
         messages: [
           {
@@ -38,10 +47,10 @@ export async function POST(req: Request) {
               unit,
               lesson,
               dueWords: due.map((c) => `${c.word} (${c.translation})`),
-              knownWords: known,
+              knownWords: course.cards.map((c) => c.word),
               mistakes,
-              speaking: !speakingOff,
-              listening: user.settings.listening,
+              speaking: micOk,
+              listening: audioOk,
               focus: typeof b.focus === "string" ? b.focus.slice(0, 200) : undefined,
             }),
           },
@@ -49,7 +58,14 @@ export async function POST(req: Request) {
         schema: lessonSchema,
         effort: "low",
       });
-      return NextResponse.json({ lesson: result, reviewWords: due.map((c) => c.word) });
+      // Drop any exercise type the learner's device can't handle, in case the model used one anyway.
+      const exercises = result.exercises.filter(
+        (e) => (audioOk || !["listen_type", "listen_choice", "speak"].includes(e.type)) && (micOk || e.type !== "speak"),
+      );
+      const reviewWords = due.map((c) => c.word);
+      const payload: LessonSessionPayload = { mode, unitId: unit?.id, lessonId: lesson?.id, exercises, reviewWords };
+      const sessionId = createSession(user.id, "lesson", payload);
+      return NextResponse.json({ sessionId, lesson: { ...result, exercises: exercises.map(redactExercise) }, reviewWords });
     } catch (e) {
       return aiErrorResponse(e);
     }

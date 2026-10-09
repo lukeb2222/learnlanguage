@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { currentUser, unauthorized } from "@/lib/server/auth";
-import { findUserByUsername } from "@/lib/server/db";
-import { publicProfile } from "@/lib/server/public";
+import { findUserByUsername, publicProfile } from "@/lib/server/db";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ username: string }> }) {
   const me = await currentUser();
@@ -9,5 +8,5 @@ export async function GET(_req: Request, ctx: { params: Promise<{ username: stri
   const { username } = await ctx.params;
   const user = findUserByUsername(decodeURIComponent(username));
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
-  return NextResponse.json({ user: publicProfile(user, me) });
+  return NextResponse.json({ user: publicProfile(user, me.id) });
 }

@@ -46,6 +46,8 @@ export function weekEndsAt(now: Date): Date {
 // ---------- constants ----------
 
 export const MAX_HEARTS = 5;
+/** Lesson modes where wrong answers cost hearts. */
+export const HEART_MODES: string[] = ["lesson", "unit_review"];
 export const HEART_REGEN_MS = 3 * 60 * 60 * 1000;
 export const MAX_FREEZES = 2;
 

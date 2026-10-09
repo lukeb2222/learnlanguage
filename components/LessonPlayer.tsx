@@ -6,17 +6,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { useUser } from "./UserProvider";
 import { ErrorBox, LoadingScreen, Mascot, Modal, ProgressBar, Spinner } from "./ui";
-import { api, normalizeAnswer, quickMatch, shuffle, similarity } from "@/lib/client";
+import { api, shuffle, similarity } from "@/lib/client";
 import { getLesson } from "@/lib/lessonCache";
-import { canRecognize, listen, speak } from "@/lib/speech";
+import { canRecognize, deviceCaps, listen, speak } from "@/lib/speech";
 import { sfx } from "@/lib/sound";
 import { getLanguage } from "@/lib/languages";
-import { dailyXpGoal, dayKey, MAX_HEARTS } from "@/lib/game";
-import type { Exercise, Lesson, LessonMode, LessonResult, Mistake, UserState, VocabItem } from "@/lib/types";
+import { dailyXpGoal, dayKey, HEART_MODES, MAX_HEARTS } from "@/lib/game";
+import { NO_SPACE_LANGS } from "@/lib/answers";
+import type { Exercise, Lesson, LessonMode, LessonResult, UserState } from "@/lib/types";
 
-const HEART_MODES: LessonMode[] = ["lesson", "unit_review"];
 const LIVES_MODES: LessonMode[] = ["legendary", "test_out"];
-const NO_SPACE_LANGS = ["zh", "yue", "ja", "th"];
 
 interface QueueItem {
   ex: Exercise;
@@ -26,11 +25,19 @@ interface QueueItem {
 
 type Status = "answering" | "checking" | "correct" | "wrong";
 
+interface Verdict {
+  correct: boolean;
+  note: string;
+  correctAnswer: string;
+  explanation: string;
+  user: UserState;
+}
+
 export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMode; unitId?: string; lessonId?: string; focus?: string }) {
-  const { user, course, action } = useUser();
+  const { user, course, action, setUser } = useUser();
   const router = useRouter();
   const [lesson, setLesson] = useState<Lesson | null>(null);
-  const [reviewWords, setReviewWords] = useState<string[]>([]);
+  const [sessionId, setSessionId] = useState("");
   const [error, setError] = useState("");
   const [started, setStarted] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -40,15 +47,15 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
   const [feedback, setFeedback] = useState<{ title: string; detail: string; correctAnswer?: string }>({ title: "", detail: "" });
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
-  const [firstTry, setFirstTry] = useState<Record<number, boolean>>({});
-  const [mistakes, setMistakes] = useState<Mistake[]>([]);
-  const [reviewed, setReviewed] = useState<Record<string, boolean>>({});
   const [livesLost, setLivesLost] = useState(0);
   const [outOfHearts, setOutOfHearts] = useState(false);
   const [quitOpen, setQuitOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
   const [finished, setFinished] = useState<null | { xp: number; result: LessonResult; events: string[] }>(null);
   const [showRoman, setShowRoman] = useState(true);
+  const [noAudio, setNoAudio] = useState(false);
+  const [lastExpected, setLastExpected] = useState("");
+  const [checkError, setCheckError] = useState("");
   const startTime = useRef(Date.now());
 
   const lang = course ? getLanguage(course.languageId) : getLanguage("en");
@@ -58,10 +65,12 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
     if (!course) return;
     setError("");
     try {
+      const caps = await deviceCaps(lang.tts);
+      setNoAudio(!caps.audio);
       const key = `${course.languageId}:${mode}:${unitId ?? ""}/${lessonId ?? ""}`;
-      const res = await getLesson(key, { mode, unitId, lessonId, focus }, { consume: true });
+      const res = await getLesson(key, { mode, unitId, lessonId, focus, ...caps }, { consume: true });
       setLesson(res.lesson);
-      setReviewWords(res.reviewWords);
+      setSessionId(res.sessionId);
       setQueue(res.lesson.exercises.map((ex, i) => ({ ex, retry: false, key: i })));
     } catch (e) {
       setError((e as Error).message);
@@ -80,7 +89,6 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
   const ex = item?.ex;
   const hearts = user?.stats.hearts ?? MAX_HEARTS;
   const unlimited = user?.settings.unlimitedHearts ?? false;
-  const usesHearts = HEART_MODES.includes(mode) && !unlimited;
   const maxLives = 3;
 
   // auto-play audio for listening/teach exercises
@@ -92,44 +100,27 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
     }
   }, [index, started]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const finish = useCallback(
-    async (passedOverride?: boolean) => {
-      if (!lesson) return;
-      const graded = queue.filter((q) => !q.retry && q.ex.type !== "teach");
-      const correct = graded.filter((q) => firstTry[q.key]).length;
-      const total = graded.length;
-      const newVocab: VocabItem[] = lesson.exercises.flatMap((e) => e.newVocab ?? []);
-      let passed = passedOverride ?? true;
-      if (mode === "test_out") passed = passed && total > 0 && correct / total >= 0.8;
-      const result: LessonResult = {
-        mode,
-        unitId,
-        lessonId,
-        correct,
-        total,
+  /** The server recomputes the result from its own grading records. */
+  const finish = useCallback(async () => {
+    try {
+      const res = await action<{ xp: number; events: string[]; result: LessonResult }>({
+        type: "lessonResult",
+        sessionId,
         maxCombo,
         durationSec: Math.round((Date.now() - startTime.current) / 1000),
-        newVocab: passed ? newVocab : [],
-        reviewed: Object.entries(reviewed).map(([word, ok]) => ({ word, correct: ok })),
-        mistakes,
-        passed,
-      };
-      try {
-        const res = await action<{ xp: number; events: string[] }>({ type: "lessonResult", result });
-        setFinished({ xp: res.xp, result, events: res.events });
-      } catch {
-        setFinished({ xp: 0, result, events: [] });
-      }
-      if (passed) {
+      });
+      setFinished({ xp: res.xp, result: res.result, events: res.events });
+      if (res.result.passed) {
         sfx.complete();
         void confetti({ particleCount: 140, spread: 90, origin: { y: 0.5 } });
       }
-    },
-    [lesson, queue, firstTry, maxCombo, reviewed, mistakes, mode, unitId, lessonId, action],
-  );
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [sessionId, maxCombo, action]);
 
   if (!user || !course) return <LoadingScreen title="Loading…" />;
-  if (error) return <ErrorBox message={error} onRetry={load} />;
+  if (error) return <ErrorBox message={error} onRetry={finished === null && !lesson ? load : () => router.push("/learn")} />;
   if (!lesson) return <LoadingScreen />;
 
   if (finished) return <LessonComplete finished={finished} user={user} onContinue={() => router.push(mode === "lesson" || LIVES_MODES.includes(mode) || mode === "unit_review" ? "/learn" : "/practice")} />;
@@ -149,6 +140,12 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
             <p className="text-ink/80">{lesson.culturalNote}</p>
           </div>
         )}
+        {noAudio && (
+          <p className="rounded-2xl bg-sun-100 p-3 text-sm font-semibold">
+            🔇 Your browser has no {lang.name} voice installed, so listening and speaking exercises are skipped. Add a {lang.name} voice in your device&apos;s
+            text-to-speech settings to unlock them.
+          </p>
+        )}
         {LIVES_MODES.includes(mode) && <p className="font-semibold text-coral-600">You can make up to {maxLives - 1} mistakes. No hints!</p>}
         <button
           className="btn btn-primary w-full py-4 text-lg"
@@ -157,7 +154,7 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
             setStarted(true);
           }}
         >
-          Let's go!
+          Let&apos;s go!
         </button>
       </div>
     );
@@ -180,107 +177,61 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
     );
   }
 
-  function markReviewed(e: Exercise, ok: boolean) {
-    const text = `${e.prompt} ${e.correctAnswer} ${e.audioText} ${e.pairs.map((p) => p.left).join(" ")}`.toLowerCase();
-    const next = { ...reviewed };
-    for (const w of reviewWords) {
-      if (text.includes(w.toLowerCase()) && next[w] !== false) next[w] = ok;
-    }
-    setReviewed(next);
-  }
-
-  async function onCorrect(note?: string) {
-    if (!item) return;
+  function showCorrect(note: string) {
     sfx.correct();
     setStatus("correct");
     const c = combo + 1;
     setCombo(c);
     setMaxCombo(Math.max(maxCombo, c));
-    if (!item.retry && firstTry[item.key] === undefined) setFirstTry({ ...firstTry, [item.key]: true });
-    markReviewed(item.ex, true);
     const praise = c >= 5 ? `🔥 ${c} in a row!` : ["Nice!", "Great job!", "Correct!", "Excellent!", "You got it!"][Math.floor(Math.random() * 5)];
-    setFeedback({ title: praise, detail: note ?? "", correctAnswer: undefined });
+    setFeedback({ title: praise, detail: note });
   }
 
-  async function onWrong(given: string, note?: string) {
-    if (!item || !user) return;
+  function showWrong(note: string, correctAnswer: string) {
+    if (!item) return;
     sfx.wrong();
     setStatus("wrong");
     setCombo(0);
-    if (!item.retry) {
-      setFirstTry({ ...firstTry, [item.key]: false });
-      setQueue((q) => [...q, { ex: item.ex, retry: true, key: item.key }]);
-    }
-    markReviewed(item.ex, false);
-    setMistakes((m) => [...m, { prompt: item.ex.prompt || item.ex.audioText, expected: item.ex.correctAnswer, given, at: new Date().toISOString() }]);
-    setFeedback({ title: "Not quite", detail: note ?? item.ex.explanation, correctAnswer: item.ex.correctAnswer });
-    if (usesHearts) {
-      const res = await action({ type: "loseHeart" }).catch(() => null);
-      if (res && res.user.stats.hearts <= 0) setTimeout(() => setOutOfHearts(true), 1200);
-    }
-    if (LIVES_MODES.includes(mode)) setLivesLost((l) => l + 1);
+    if (!item.retry) setQueue((q) => [...q, { ex: item.ex, retry: true, key: item.key }]);
+    setFeedback({ title: "Not quite", detail: note, correctAnswer: correctAnswer || undefined });
+    if (LIVES_MODES.includes(mode) && !item.retry) setLivesLost((l) => l + 1);
   }
 
-  async function check() {
-    if (!ex || status !== "answering") return;
-    const accepted = [ex.correctAnswer, ...ex.acceptedAnswers];
-    switch (ex.type) {
-      case "multiple_choice":
-      case "fill_blank":
-      case "listen_choice":
-        return normalizeAnswer(answer) === normalizeAnswer(ex.correctAnswer) ? onCorrect(ex.explanation) : onWrong(answer);
-      case "translate_build": {
-        const noSpace = ex.answerLanguage === "target" && NO_SPACE_LANGS.includes(lang.id);
-        const built = noSpace ? answer.replace(/\s+/g, "") : answer;
-        const m = quickMatch(built, accepted);
-        if (m !== "no") return onCorrect(ex.explanation);
-        return gradeWithAI(built);
-      }
-      case "translate_type": {
-        const m = quickMatch(answer, accepted);
-        if (m === "exact") return onCorrect(ex.explanation);
-        if (m === "typo") return onCorrect(`Watch the spelling: ${ex.correctAnswer}`);
-        return gradeWithAI(answer);
-      }
-      case "listen_type": {
-        const sim = Math.max(...accepted.map((a) => similarity(answer, a)));
-        if (sim >= 0.97) return onCorrect();
-        if (sim >= 0.85) return onCorrect(`Almost perfect! Exact answer: ${ex.correctAnswer}`);
-        return onWrong(answer);
-      }
-      default:
-        return onCorrect();
-    }
-  }
-
-  async function gradeWithAI(given: string) {
-    if (!ex) return;
+  /** Sends the answer to the server, which grades it, records it and charges hearts. */
+  async function submit(given: string, selfReportCorrect?: boolean, overrideNote?: string) {
+    if (!item || status !== "answering") return;
     setStatus("checking");
     try {
-      const res = await api<{ correct: boolean; almost: boolean; feedback: string; bestAnswer: string }>("/api/ai/grade", {
-        instruction: ex.instruction,
-        prompt: ex.prompt,
-        expected: ex.correctAnswer,
-        accepted: ex.acceptedAnswers,
-        answer: given,
-      });
+      const v = await api<Verdict>("/api/lesson/check", { sessionId, index: item.key, answer: given, selfReportCorrect });
+      setUser(v.user);
       setStatus("answering");
-      if (res.correct) await onCorrect(res.feedback + (res.bestAnswer && normalizeAnswer(res.bestAnswer) !== normalizeAnswer(given) ? ` · Another way: ${res.bestAnswer}` : ""));
-      else await onWrong(given, res.feedback);
-    } catch {
+      if (v.correct) showCorrect(overrideNote ?? (v.note || v.explanation));
+      else {
+        showWrong(overrideNote ?? (v.note || v.explanation), v.correctAnswer);
+        if (HEART_MODES.includes(mode) && !v.user.settings.unlimitedHearts && v.user.stats.hearts <= 0) setTimeout(() => setOutOfHearts(true), 1200);
+      }
+      setFeedback((f) => ({ ...f, correctAnswer: v.correct ? undefined : v.correctAnswer || undefined }));
+      setLastExpected(v.correctAnswer);
+    } catch (e) {
       setStatus("answering");
-      await onWrong(given);
+      setCheckError((e as Error).message);
+      setTimeout(() => setCheckError(""), 5000);
     }
+  }
+
+  function check() {
+    if (!ex || status !== "answering") return;
+    void submit(answer);
   }
 
   function next() {
     if (LIVES_MODES.includes(mode) && livesLost >= maxLives) {
-      void finish(false);
+      void finish();
       return;
     }
     setStatus("answering");
     setAnswer("");
-    if (index + 1 >= queue.length) void finish(true);
+    if (index + 1 >= queue.length) void finish();
     else setIndex(index + 1);
   }
 
@@ -314,12 +265,13 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
             locked={status !== "answering"}
             answer={answer}
             setAnswer={setAnswer}
-            onMatchDone={(errors) => (errors === 0 ? onCorrect() : errors > 2 ? onWrong(`${errors} wrong matches`) : onCorrect(`${errors} slip${errors > 1 ? "s" : ""} along the way`))}
-            onSpeakResult={(text, ok) => (ok ? onCorrect() : onWrong(text, "That didn't quite sound right. Listen and try once more later!"))}
+            onMatchDone={(errors) =>
+              submit(`${errors} wrong matches`, errors <= 2, errors === 0 ? "" : errors > 2 ? `${errors} wrong matches` : `${errors} slip${errors > 1 ? "s" : ""} along the way`)
+            }
+            onSpeakResult={(text, ok) => submit(text, ok, ok ? "" : "That didn't quite sound right. Listen and try once more later!")}
             onSkipSpeaking={async () => {
               await action({ type: "disableSpeaking" });
-              setStatus("correct");
-              setFeedback({ title: "No problem!", detail: "Speaking exercises are paused for an hour." });
+              await submit("(skipped speaking)", true, "No problem! Speaking exercises are paused for an hour.");
             }}
             hideHints={LIVES_MODES.includes(mode)}
             nativeName={native.name}
@@ -327,13 +279,18 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
         )}
       </div>
 
+      {checkError && (
+        <div className="fixed inset-x-0 bottom-28 z-40 mx-auto w-fit max-w-md animate-pop rounded-2xl bg-coral-500 px-4 py-2 text-center font-semibold text-white shadow-lg">
+          {checkError}
+        </div>
+      )}
       <FooterBar
         ex={ex}
         status={status}
         feedback={feedback}
         canCheck={canCheck}
         onCheck={check}
-        onSkip={() => onWrong("(skipped)")}
+        onSkip={() => submit("")}
         onContinue={next}
         onExplain={() => setExplainOpen(true)}
         showRoman={showRoman}
@@ -354,7 +311,7 @@ export function LessonPlayer({ mode, unitId, lessonId, focus }: { mode: LessonMo
         </div>
       </Modal>
 
-      {ex && explainOpen && <ExplainModal ex={ex} given={answer} onClose={() => setExplainOpen(false)} ttsLang={lang.tts} />}
+      {ex && explainOpen && <ExplainModal ex={ex} expected={lastExpected} given={answer} onClose={() => setExplainOpen(false)} ttsLang={lang.tts} />}
     </div>
   );
 }
@@ -876,7 +833,7 @@ function FooterBar({
   );
 }
 
-function ExplainModal({ ex, given, onClose, ttsLang }: { ex: Exercise; given: string; onClose: () => void; ttsLang: string }) {
+function ExplainModal({ ex, expected, given, onClose, ttsLang }: { ex: Exercise; expected: string; given: string; onClose: () => void; ttsLang: string }) {
   const [data, setData] = useState<{ explanation: string; examples: { sentence: string; romanization: string; translation: string }[]; tip: string } | null>(null);
   const [error, setError] = useState("");
   const [question, setQuestion] = useState("");
@@ -886,7 +843,7 @@ function ExplainModal({ ex, given, onClose, ttsLang }: { ex: Exercise; given: st
     setBusy(true);
     setError("");
     try {
-      const res = await api<typeof data>("/api/ai/explain", { instruction: ex.instruction, prompt: ex.prompt || ex.audioText, expected: ex.correctAnswer, given, question: q });
+      const res = await api<typeof data>("/api/ai/explain", { instruction: ex.instruction, prompt: ex.prompt || ex.audioText, expected: expected || ex.correctAnswer, given, question: q });
       setData(res);
       setQuestion("");
     } catch (e) {

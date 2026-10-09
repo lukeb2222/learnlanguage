@@ -17,6 +17,7 @@ export async function POST(req: Request) {
   }
   try {
     const test = await generate({
+        userId: user.id,
       system: systemPrompt({
         name: user.displayName,
         ageGroup: String(b.ageGroup ?? ""),

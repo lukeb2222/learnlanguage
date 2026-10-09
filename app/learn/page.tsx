@@ -10,7 +10,7 @@ import { api } from "@/lib/client";
 import { currentLesson, lessonKey, MAX_HEARTS, proficiencyScore, unitComplete } from "@/lib/game";
 import { getLanguage } from "@/lib/languages";
 import { prefetchLesson } from "@/lib/lessonCache";
-import { speak } from "@/lib/speech";
+import { deviceCaps, speak } from "@/lib/speech";
 import type { Guidebook, PlanUnit, UserState } from "@/lib/types";
 
 const UNIT_COLORS = ["#7c5cff", "#1fc47f", "#ff6b47", "#2fa8ff", "#ffb800", "#e11d48", "#14b8a6", "#9333ea"];
@@ -36,6 +36,7 @@ function Path() {
   const [extending, setExtending] = useState(false);
   const [extendError, setExtendError] = useState("");
   const currentRef = useRef<HTMLDivElement>(null);
+  const [noAudio, setNoAudio] = useState(false);
 
   const cur = course ? currentLesson(course) : null;
 
@@ -48,7 +49,15 @@ function Path() {
     if (!course?.plan || !cur) return;
     const u = course.plan.units[cur.unitIndex];
     const l = u.lessons[cur.lessonIndex];
-    prefetchLesson(`${course.languageId}:lesson:${u.id}/${l.id}`, { mode: "lesson", unitId: u.id, lessonId: l.id });
+    let cancelled = false;
+    void deviceCaps(getLanguage(course.languageId).tts).then((caps) => {
+      if (cancelled) return;
+      setNoAudio(!caps.audio);
+      prefetchLesson(`${course.languageId}:lesson:${u.id}/${l.id}`, { mode: "lesson", unitId: u.id, lessonId: l.id, ...caps });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [course?.languageId, course?.plan, cur?.unitIndex, cur?.lessonIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!user || !course?.plan) return null;
@@ -87,6 +96,12 @@ function Path() {
         </span>
         <span title="Estimated proficiency score (0-160)">📈 Score {proficiencyScore(course)}</span>
       </div>
+      {noAudio && (
+        <div className="mb-6 rounded-2xl bg-sun-100 p-3 text-sm font-semibold">
+          🔇 This browser has no {lang.name} voice, so listening and speaking exercises are skipped. Install a {lang.name} text-to-speech voice in your
+          device settings (or try another browser) to unlock them.
+        </div>
+      )}
 
       {plan.units.map((unit, ui) => {
         const color = UNIT_COLORS[ui % UNIT_COLORS.length];

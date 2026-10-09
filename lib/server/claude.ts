@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { NextResponse } from "next/server";
 import type { z } from "zod";
+import { countAiCall } from "./db";
 
 export const MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 
@@ -26,7 +27,12 @@ export class AIError extends Error {
 
 type Effort = "low" | "medium" | "high";
 
+/** Max AI requests per learner per day (0 = unlimited). Protects the host's API bill. */
+const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT ?? 200);
+
 interface GenerateOptions<S extends z.ZodType> {
+  /** The learner this request is for; counted against the daily AI quota. */
+  userId: string;
   /** Stable instructions (pedagogy + learner profile). Cached across requests. */
   system: string;
   /** The specific request, or a full conversation. */
@@ -41,12 +47,16 @@ interface GenerateOptions<S extends z.ZodType> {
  * (Zod) via structured outputs, so callers always receive well-formed data.
  */
 export async function generate<S extends z.ZodType>({
+  userId,
   system,
   messages,
   schema,
   effort = "medium",
   maxTokens = 16000,
 }: GenerateOptions<S>): Promise<z.infer<S>> {
+  if (DAILY_LIMIT > 0 && countAiCall(userId, new Date().toISOString().slice(0, 10)) > DAILY_LIMIT) {
+    throw new AIError("You've reached today's limit for AI-generated content. It resets at midnight (UTC) — see you tomorrow!", 429);
+  }
   const useFallback = FALLBACK_MODELS.has(MODEL);
   let response;
   try {

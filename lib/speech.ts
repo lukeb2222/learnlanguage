@@ -29,18 +29,23 @@ export function speak(text: string, lang: string, opts: { slow?: boolean; onEnd?
     opts.onEnd?.();
     return;
   }
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = lang;
-  const voices = voicesLoaded.length ? voicesLoaded : loadVoices();
-  const exact = voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase());
-  const base = voices.find((v) => v.lang.toLowerCase().startsWith(lang.split("-")[0].toLowerCase()));
-  const voice = exact ?? base;
-  if (voice) u.voice = voice;
-  u.rate = opts.slow ? 0.6 : 0.92;
-  u.onend = () => opts.onEnd?.();
-  u.onerror = () => opts.onEnd?.();
-  window.speechSynthesis.speak(u);
+  // Speech engines vary a lot between browsers; never let audio break the UI.
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = lang;
+    const voices = voicesLoaded.length ? voicesLoaded : loadVoices();
+    const exact = voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase());
+    const base = voices.find((v) => v.lang.toLowerCase().startsWith(lang.split("-")[0].toLowerCase()));
+    const voice = exact ?? base;
+    if (voice) u.voice = voice;
+    u.rate = opts.slow ? 0.6 : 0.92;
+    u.onend = () => opts.onEnd?.();
+    u.onerror = () => opts.onEnd?.();
+    window.speechSynthesis.speak(u);
+  } catch {
+    opts.onEnd?.();
+  }
 }
 
 export function stopSpeaking() {
@@ -92,4 +97,26 @@ export function listen(
       /* already stopped */
     }
   };
+}
+
+/**
+ * What this device can do for a language: play synthesized speech (needs an
+ * installed voice) and recognise speech. Waits briefly for voices to load.
+ */
+export async function deviceCaps(lang: string): Promise<{ audio: boolean; mic: boolean }> {
+  if (typeof window === "undefined") return { audio: false, mic: false };
+  if (canSpeak() && !voicesLoaded.length) {
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, 1200);
+      const check = () => {
+        if (loadVoices().length) {
+          clearTimeout(t);
+          resolve();
+        } else setTimeout(check, 100);
+      };
+      check();
+    });
+  }
+  const audio = canSpeak() && hasVoiceFor(lang);
+  return { audio, mic: audio && canRecognize() };
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { currentUser, unauthorized } from "@/lib/server/auth";
-import { save, toClient } from "@/lib/server/db";
+import { toClient, updateUser } from "@/lib/server/db";
 import { LANGUAGES } from "@/lib/languages";
 import type { Course, LearnerProfile } from "@/lib/types";
 
@@ -47,11 +47,12 @@ export async function POST(req: Request) {
     xp: 0,
     startedAt: new Date().toISOString(),
   };
-  user.courses[profile.targetLanguage] = course;
-  user.activeCourse = profile.targetLanguage;
-  if (typeof b.dailyMinutes === "number" && b.dailyMinutes > 0 && b.dailyMinutes <= 60) {
-    user.settings.dailyMinutes = Math.round(b.dailyMinutes);
-  }
-  save();
-  return NextResponse.json({ user: toClient(user) });
+  const saved = updateUser(user.id, (u) => {
+    u.courses[profile.targetLanguage] = course;
+    u.activeCourse = profile.targetLanguage;
+    if (typeof b.dailyMinutes === "number" && b.dailyMinutes > 0 && b.dailyMinutes <= 60) {
+      u.settings.dailyMinutes = Math.round(b.dailyMinutes);
+    }
+  });
+  return NextResponse.json({ user: toClient(saved!.user) });
 }

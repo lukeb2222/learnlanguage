@@ -5,9 +5,10 @@ import { withCourse } from "@/lib/server/route";
 
 /** Role-play scenarios tailored to the learner's goals and interests. */
 export async function POST() {
-  return withCourse(async ({ course }) => {
+  return withCourse(async ({ user, course }) => {
     try {
       const result = await generate({
+        userId: user.id,
         system: systemPrompt(course.profile),
         messages: [
           {

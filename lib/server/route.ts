@@ -6,7 +6,7 @@ import type { Course } from "../types";
 
 type Ctx = { user: StoredUser; course: Course };
 
-/** Wraps an AI route: requires sign-in and an active course. */
+/** Wraps a route: requires sign-in and an active course. */
 export async function withCourse(handler: (ctx: Ctx) => Promise<Response>): Promise<Response> {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Please sign in." }, { status: 401 });

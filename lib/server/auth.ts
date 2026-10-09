@@ -2,13 +2,13 @@ import "server-only";
 import { cookies } from "next/headers";
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { db, type StoredUser } from "./db";
+import { sessionSecret, updateUser, type StoredUser } from "./db";
 import { prepareUser } from "./userOps";
 
 const COOKIE = "lingora_session";
 
 function secret() {
-  return process.env.SESSION_SECRET || db().secret;
+  return process.env.SESSION_SECRET || sessionSecret();
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString("hex")) {
@@ -30,7 +30,7 @@ export function setSession(res: NextResponse, userId: string) {
   res.cookies.set(COOKIE, `${payload}.${sign(payload)}`, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" && process.env.INSECURE_COOKIES !== "1",
     path: "/",
     expires: new Date(expires),
   });
@@ -40,8 +40,8 @@ export function clearSession(res: NextResponse) {
   res.cookies.set(COOKIE, "", { path: "/", expires: new Date(0) });
 }
 
-/** Returns the signed-in user (with time-based state brought up to date), or null. */
-export async function currentUser(): Promise<StoredUser | null> {
+/** The signed-in user's id from the session cookie, or null. */
+export async function currentUserId(): Promise<string | null> {
   const raw = (await cookies()).get(COOKIE)?.value;
   if (!raw) return null;
   const parts = raw.split(".");
@@ -50,9 +50,14 @@ export async function currentUser(): Promise<StoredUser | null> {
   const expected = sign(`${id}.${expires}`);
   if (sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   if (Number(expires) < Date.now()) return null;
-  const user = db().users[id];
-  if (!user) return null;
-  return prepareUser(user);
+  return id;
+}
+
+/** Returns the signed-in user with time-based state brought up to date (and saved), or null. */
+export async function currentUser(): Promise<StoredUser | null> {
+  const id = await currentUserId();
+  if (!id) return null;
+  return updateUser(id, (u) => prepareUser(u))?.user ?? null;
 }
 
 export function unauthorized() {

@@ -63,14 +63,35 @@ Production: `npm run build && npm start`.
 | `ANTHROPIC_API_KEY` | Required. Used only on the server. |
 | `CLAUDE_MODEL` | Optional. Defaults to `claude-opus-5-5`. |
 | `SESSION_SECRET` | Optional. Signs login cookies. If unset, a random secret is generated and stored. |
-| `DATA_DIR` | Optional. Where the JSON database is stored (default `./data`). |
+| `AI_DAILY_LIMIT` | Optional. Max AI requests per learner per day (default 200, `0` = unlimited). |
+| `DATA_DIR` | Optional. Where the SQLite database is stored (default `./data`). |
 
-Because the app is free for learners, the host pays for Claude API usage. Each lesson is one Claude request. Lessons run at `low` effort and course planning at `medium`, and the system prompt is cached between requests.
+### Costs
+
+Because the app is free for learners, the host pays for Claude API usage. To keep that predictable:
+
+- Each lesson is one Claude request. Lessons run at `low` effort and course planning at `medium`.
+- The research and learner-profile system prompt is cached between requests.
+- Guidebooks and alphabet charts are generated once and stored.
+- Answers are checked locally first. Claude is only asked about typed translations that don't match an accepted answer.
+- Each learner has a daily AI request limit (`AI_DAILY_LIMIT`). Learners who reach it get a friendly message, and it resets at midnight UTC.
 
 ## Architecture
 
 - **Next.js (App Router) + TypeScript + Tailwind.** All pages are in `app/`; shared UI is in `components/`.
 - **Claude integration** (`lib/server/claude.ts`, `lib/server/ai.ts`): every AI call uses the official `@anthropic-ai/sdk` with **structured outputs**, defined as Zod schemas, so the UI always receives well-formed lessons, stories and so on. It also enables the server-side refusal fallback (`fallbacks: "default"`) and prompt caching.
 - **Game engine** (`lib/game.ts`): XP, streaks, hearts, quests, leagues, achievements, the shop and spaced repetition. These are pure functions, and all state changes are applied on the server through `/api/action`.
-- **Storage** (`lib/server/db.ts`): a small JSON-file database with scrypt-hashed passwords and HMAC-signed session cookies. It's fine for one self-hosted server; replace this one module with Postgres or SQLite to scale out.
-- Lesson results are reported by the client, so XP is trusted as submitted. Add server-side answer verification if your leagues need to be cheat-proof.
+- **Storage** (`lib/server/db.ts`): SQLite via `better-sqlite3`, in WAL mode.
+  - Each learner's game state is a JSON document. The columns needed for login, leagues, league history and friends are stored and indexed alongside it.
+  - Every write runs in an `IMMEDIATE` transaction, so simultaneous requests never overwrite each other.
+  - Passwords are hashed with scrypt, and logins use HMAC-signed cookies.
+  - Several server processes on one machine can share the database file. To run across several machines, port this one module to Postgres.
+- **Cheat-resistant progress** (`lib/server/grading.ts`, `/api/lesson/check`):
+  - Every generated lesson and story is stored on the server as a one-time session. The browser never receives the answer key for exercises the server grades.
+  - The server grades each answer, records the first attempt and charges hearts itself.
+  - When a lesson ends, the server computes the result from its own records: correct answers, pass/fail, new words, mistakes and XP. The browser can't submit made-up scores, and each session can only be submitted once.
+  - Combo bonuses are capped by the number of correct answers, and time is capped by how long the server has seen the session.
+  - Pair matching and speech recognition happen in the browser, so those two exercise types are self-reported.
+- **Audio**: the browser's speech synthesis needs an installed voice for each language.
+  - The app checks this on every device. If there's no voice, listening and speaking exercises are left out of lessons (the server enforces this too) and the learner sees a notice explaining how to add one.
+  - Speech recognition needs Chrome or Edge.

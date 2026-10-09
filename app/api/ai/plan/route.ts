@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { aiErrorResponse, generate } from "@/lib/server/claude";
 import { planPrompt, planSchema, systemPrompt } from "@/lib/server/ai";
-import { save, toClient } from "@/lib/server/db";
+import { toClient, updateUser } from "@/lib/server/db";
 import { withCourse } from "@/lib/server/route";
 import type { PlanUnit } from "@/lib/types";
 
@@ -15,6 +15,7 @@ export async function POST(req: Request) {
     try {
       const existing = extend ? course.plan?.units : undefined;
       const plan = await generate({
+        userId: user.id,
         system: systemPrompt(course.profile),
         messages: [{ role: "user", content: planPrompt(course.profile, existing) }],
         schema: planSchema,
@@ -26,12 +27,15 @@ export async function POST(req: Request) {
         id: `u${offset + i + 1}`,
         lessons: u.lessons.map((l, j) => ({ ...l, id: `l${j + 1}` })),
       }));
-      course.plan =
-        extend && course.plan
-          ? { ...course.plan, units: [...course.plan.units, ...units] }
-          : { summary: plan.summary, approach: plan.approach, units };
-      save();
-      return NextResponse.json({ user: toClient(user) });
+      const saved = updateUser(user.id, (u) => {
+        const c = u.courses[course.languageId];
+        if (!c) return;
+        c.plan =
+          extend && c.plan
+            ? { ...c.plan, units: [...c.plan.units, ...units] }
+            : { summary: plan.summary, approach: plan.approach, units };
+      });
+      return NextResponse.json({ user: toClient(saved!.user) });
     } catch (e) {
       return aiErrorResponse(e);
     }

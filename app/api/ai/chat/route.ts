@@ -4,7 +4,7 @@ import { aiErrorResponse, generate } from "@/lib/server/claude";
 import { chatSchema, systemPrompt } from "@/lib/server/ai";
 import { withCourse } from "@/lib/server/route";
 import { recordChat } from "@/lib/game";
-import { save, toClient } from "@/lib/server/db";
+import { toClient, updateUser } from "@/lib/server/db";
 import { getLanguage } from "@/lib/languages";
 
 export const maxDuration = 120;
@@ -41,13 +41,10 @@ If the learner writes in their native language, help them say it in ${target.nam
 Corrections: ${CORRECTION[course.profile.correctionStyle] ?? CORRECTION.balanced} Leave corrections[] empty when there are no mistakes.`;
 
     try {
-      const result = await generate({ system, messages, schema: chatSchema, effort: "low", maxTokens: 4000 });
+      const result = await generate({ userId: user.id, system, messages, schema: chatSchema, effort: "low", maxTokens: 4000 });
       const userSpoke = history.some((t) => t.role === "user");
-      if (userSpoke) {
-        recordChat(user);
-        save();
-      }
-      return NextResponse.json({ ...result, user: toClient(user) });
+      const saved = userSpoke ? updateUser(user.id, (u) => recordChat(u))?.user : user;
+      return NextResponse.json({ ...result, user: toClient(saved ?? user) });
     } catch (e) {
       return aiErrorResponse(e);
     }

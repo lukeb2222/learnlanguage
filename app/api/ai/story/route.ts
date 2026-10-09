@@ -2,17 +2,20 @@ import { NextResponse } from "next/server";
 import { aiErrorResponse, generate } from "@/lib/server/claude";
 import { storySchema, systemPrompt } from "@/lib/server/ai";
 import { withCourse } from "@/lib/server/route";
+import { createSession } from "@/lib/server/db";
+import { redactStory } from "@/lib/server/grading";
 
 export const maxDuration = 300;
 
 /** Short interactive stories with comprehension questions. */
 export async function POST(req: Request) {
   const b = await req.json().catch(() => ({}));
-  return withCourse(async ({ course }) => {
+  return withCourse(async ({ user, course }) => {
     const unit = course.plan?.units.find((u) => u.id === b.unitId);
     const known = course.cards.map((c) => c.word).slice(-150);
     try {
       const story = await generate({
+        userId: user.id,
         system: systemPrompt(course.profile),
         messages: [
           {
@@ -28,7 +31,8 @@ Segments: "line" segments carry speaker/text/romanization/translation (question/
         schema: storySchema,
         effort: "low",
       });
-      return NextResponse.json({ story });
+      const sessionId = createSession(user.id, "story", { unitId: unit?.id, story });
+      return NextResponse.json({ sessionId, story: redactStory(story) });
     } catch (e) {
       return aiErrorResponse(e);
     }

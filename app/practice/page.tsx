@@ -4,7 +4,10 @@ import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { useUser } from "@/components/UserProvider";
 import { Mascot } from "@/components/ui";
+import { useEffect, useState } from "react";
 import { dayKey, dueCards, MAX_HEARTS } from "@/lib/game";
+import { getLanguage } from "@/lib/languages";
+import { deviceCaps } from "@/lib/speech";
 
 export default function PracticePage() {
   return (
@@ -16,6 +19,10 @@ export default function PracticePage() {
 
 function PracticeHub() {
   const { user, course } = useUser();
+  const [caps, setCaps] = useState({ audio: true, mic: true });
+  useEffect(() => {
+    if (course) void deviceCaps(getLanguage(course.languageId).tts).then(setCaps);
+  }, [course?.languageId]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!user || !course) return null;
   const today = dayKey(new Date(), user.settings.timezone);
   const due = dueCards(course, today).length;
@@ -46,8 +53,8 @@ function PracticeHub() {
       badge: due ? String(due) : "",
       disabled: !course.cards.length,
     },
-    { href: "/lesson?mode=listening", icon: "🎧", title: "Listening practice", desc: "Train your ear with audio-only exercises.", color: "#2fa8ff", badge: "", disabled: !user.settings.listening },
-    { href: "/lesson?mode=speaking", icon: "🎤", title: "Speaking practice", desc: "Practise pronunciation with speech recognition.", color: "#ffb800", badge: "", disabled: !user.settings.speaking },
+    { href: "/lesson?mode=listening", icon: "🎧", title: "Listening practice", desc: caps.audio ? "Train your ear with audio-only exercises." : "Needs a text-to-speech voice for this language.", color: "#2fa8ff", badge: "", disabled: !user.settings.listening || !caps.audio },
+    { href: "/lesson?mode=speaking", icon: "🎤", title: "Speaking practice", desc: caps.mic ? "Practise pronunciation with speech recognition." : "Needs speech recognition (Chrome or Edge) and a voice for this language.", color: "#ffb800", badge: "", disabled: !user.settings.speaking || !caps.mic },
     { href: "/tutor", icon: "📞", title: "Video-call style chat", desc: "Talk out loud with your AI partner in a role-play.", color: "#e11d48", badge: "" },
   ];
   return (

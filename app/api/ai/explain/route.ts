@@ -6,9 +6,10 @@ import { withCourse } from "@/lib/server/route";
 /** "Explain my answer": a short personalised grammar/usage explanation. */
 export async function POST(req: Request) {
   const b = await req.json().catch(() => ({}));
-  return withCourse(async ({ course }) => {
+  return withCourse(async ({ user, course }) => {
     try {
       const result = await generate({
+        userId: user.id,
         system: systemPrompt(course.profile),
         messages: [
           {

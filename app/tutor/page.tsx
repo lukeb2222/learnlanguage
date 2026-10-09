@@ -6,7 +6,7 @@ import { useUser } from "@/components/UserProvider";
 import { Mascot, Spinner } from "@/components/ui";
 import { api } from "@/lib/client";
 import { getLanguage } from "@/lib/languages";
-import { canRecognize, listen, speak, stopSpeaking } from "@/lib/speech";
+import { canRecognize, deviceCaps, listen, speak, stopSpeaking } from "@/lib/speech";
 import type { ChatTurn, UserState } from "@/lib/types";
 
 interface Scenario {
@@ -55,6 +55,10 @@ function Tutor() {
   }, [turns, busy]);
 
   useEffect(() => () => stopSpeaking(), []);
+  const [hasVoice, setHasVoice] = useState(true);
+  useEffect(() => {
+    void deviceCaps(lang.tts).then((c) => setHasVoice(c.audio));
+  }, [lang.tts]);
 
   async function send(history: ChatTurn[]) {
     if (!scenario) return;
@@ -151,7 +155,13 @@ function Tutor() {
         <div className="mb-5 flex items-center justify-between rounded-2xl bg-white p-4 ring-2 ring-grape-100">
           <div>
             <div className="font-bold">📞 Voice call mode</div>
-            <div className="text-sm text-ink/60">{canRecognize() ? "Speak out loud and hear replies, like a video call." : "Voice input needs Chrome or Edge."}</div>
+            <div className="text-sm text-ink/60">
+              {!hasVoice
+                ? `This browser has no ${lang.name} voice, so replies can't be read aloud. Install one in your device's text-to-speech settings.`
+                : canRecognize()
+                  ? "Speak out loud and hear replies, like a video call."
+                  : "Voice input needs Chrome or Edge."}
+            </div>
           </div>
           <button
             className={`h-8 w-14 rounded-full p-1 transition ${voice ? "bg-mint-500" : "bg-grape-100"}`}

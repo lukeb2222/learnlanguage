@@ -10,7 +10,7 @@ import { api, shuffle } from "@/lib/client";
 import { getLanguage } from "@/lib/languages";
 import { speak } from "@/lib/speech";
 import { sfx } from "@/lib/sound";
-import type { Story } from "@/lib/types";
+import type { LessonResult, Story, UserState } from "@/lib/types";
 
 const SPEAKER_COLORS = ["#7c5cff", "#ff6b47", "#1fc47f", "#2fa8ff"];
 const SPEAKER_EMOJI = ["🧑", "👩", "🧔", "👧"];
@@ -19,14 +19,15 @@ function StoryPlayer() {
   const params = useSearchParams();
   const unitId = params.get("unit") ?? undefined;
   const theme = params.get("theme") ?? undefined;
-  const { user, course, action } = useUser();
+  const { user, course, action, setUser } = useUser();
   const router = useRouter();
   const [story, setStory] = useState<Story | null>(null);
   const [error, setError] = useState("");
   const [shown, setShown] = useState(1);
-  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [sessionId, setSessionId] = useState("");
+  const [answers, setAnswers] = useState<Record<number, { picked: string; correctAnswer: string }>>({});
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
-  const [done, setDone] = useState<null | number>(null);
+  const [done, setDone] = useState<null | { xp: number; result: LessonResult }>(null);
   const start = useRef(Date.now());
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -35,8 +36,9 @@ function StoryPlayer() {
   async function load() {
     setError("");
     try {
-      const res = await api<{ story: Story }>("/api/ai/story", { unitId, theme });
+      const res = await api<{ sessionId: string; story: Story }>("/api/ai/story", { unitId, theme });
       setStory(res.story);
+      setSessionId(res.sessionId);
       start.current = Date.now();
     } catch (e) {
       setError((e as Error).message);
@@ -64,35 +66,36 @@ function StoryPlayer() {
   const questions = segs.map((s, i) => ({ s, i })).filter((x) => x.s.kind === "question");
 
   async function finish() {
-    const correct = questions.filter((q) => answers[q.i] === q.s.answer).length;
-    const res = await action<{ xp: number }>({
-      type: "lessonResult",
-      result: {
-        mode: "story",
-        unitId,
-        correct,
-        total: questions.length,
-        maxCombo: 0,
+    try {
+      const res = await action<{ xp: number; result: LessonResult }>({
+        type: "lessonResult",
+        sessionId,
         durationSec: Math.round((Date.now() - start.current) / 1000),
-        newVocab: [],
-        reviewed: [],
-        mistakes: [],
-        passed: true,
-      },
-    }).catch(() => ({ xp: 0 }));
-    setDone(res.xp);
-    sfx.complete();
-    void confetti({ particleCount: 120, spread: 90 });
+      });
+      setDone({ xp: res.xp, result: res.result });
+      sfx.complete();
+      void confetti({ particleCount: 120, spread: 90 });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function pick(i: number, option: string) {
+    const v = await api<{ correct: boolean; correctAnswer: string; user: UserState }>("/api/lesson/check", { sessionId, index: i, answer: option });
+    setUser(v.user);
+    if (v.correct) sfx.correct();
+    else sfx.wrong();
+    setAnswers((a) => ({ ...a, [i]: { picked: option, correctAnswer: v.correctAnswer } }));
   }
 
   if (done !== null) {
-    const correct = questions.filter((q) => answers[q.i] === q.s.answer).length;
+    const correct = done.result.correct;
     return (
       <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-5 p-6 text-center">
         <div className="text-7xl">{story.emoji}</div>
         <h1 className="text-3xl font-bold">Story complete!</h1>
         <p className="text-lg text-ink/70">
-          You answered {correct}/{questions.length} questions correctly and earned <b className="text-sun-600">⚡ {done} XP</b>.
+          You answered {correct}/{questions.length} questions correctly and earned <b className="text-sun-600">⚡ {done.xp} XP</b>.
         </p>
         <button className="btn btn-primary w-full" onClick={() => router.push("/stories")}>
           Continue
@@ -145,7 +148,7 @@ function StoryPlayer() {
               </div>
             );
           }
-          return <StoryQuestion key={i} seg={seg} picked={answers[i]} onPick={(o) => setAnswers({ ...answers, [i]: o })} />;
+          return <StoryQuestion key={i} seg={seg} answer={answers[i]} onPick={(o) => pick(i, o)} />;
         })}
       </div>
       <div ref={bottom} />
@@ -167,8 +170,18 @@ function StoryPlayer() {
   );
 }
 
-function StoryQuestion({ seg, picked, onPick }: { seg: Story["segments"][number]; picked?: string; onPick: (o: string) => void }) {
+function StoryQuestion({
+  seg,
+  answer,
+  onPick,
+}: {
+  seg: Story["segments"][number];
+  answer?: { picked: string; correctAnswer: string };
+  onPick: (o: string) => Promise<void>;
+}) {
   const [options] = useState(() => shuffle(seg.options));
+  const [busy, setBusy] = useState(false);
+  const picked = answer?.picked;
   return (
     <div className="card animate-pop border-sun-400 p-4">
       <div className="mb-3 flex items-center gap-2 font-bold">
@@ -177,18 +190,18 @@ function StoryQuestion({ seg, picked, onPick }: { seg: Story["segments"][number]
       <div className="grid gap-2">
         {options.map((o) => {
           const isPicked = picked === o;
-          const correct = o === seg.answer;
+          const correct = o === answer?.correctAnswer;
           const cls = picked ? (correct ? "border-mint-500 bg-mint-100" : isPicked ? "border-coral-400 bg-coral-100" : "opacity-60") : "";
           return (
             <button
               key={o}
-              disabled={!!picked}
+              disabled={!!picked || busy}
               className={`chip ${cls}`}
               dir="auto"
-              onClick={() => {
-                if (o === seg.answer) sfx.correct();
-                else sfx.wrong();
-                onPick(o);
+              onClick={async () => {
+                setBusy(true);
+                await onPick(o).catch(() => {});
+                setBusy(false);
               }}
             >
               {o}
