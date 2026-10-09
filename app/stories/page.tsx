@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { useUser } from "@/components/UserProvider";
@@ -17,6 +18,7 @@ export default function StoriesPage() {
 
 function Stories() {
   const { course } = useUser();
+  const router = useRouter();
   const [theme, setTheme] = useState("");
   if (!course?.plan) return null;
   const units = course.plan.units;
@@ -33,7 +35,7 @@ function Stories() {
         className="card mb-6 flex flex-col gap-3 p-5 sm:flex-row"
         onSubmit={(e) => {
           e.preventDefault();
-          window.location.href = `/stories/play?theme=${encodeURIComponent(theme || "surprise me")}`;
+          router.push(`/stories/play?theme=${encodeURIComponent(theme || "surprise me")}`);
         }}
       >
         <input className="input" placeholder="Write a story about… (e.g. a lost cat in Tokyo)" value={theme} onChange={(e) => setTheme(e.target.value)} />

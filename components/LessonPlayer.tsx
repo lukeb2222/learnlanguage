@@ -783,7 +783,10 @@ function FooterBar({
 
   const bg = status === "correct" ? "bg-mint-100" : status === "wrong" ? "bg-coral-100" : "bg-white";
   return (
-    <div className={`fixed inset-x-0 bottom-0 z-30 border-t-2 border-grape-100 ${bg} ${answered ? "animate-slideup" : ""}`}>
+    <div
+      className={`fixed inset-x-0 bottom-0 z-30 border-t-2 border-grape-100 ${bg} ${answered ? "animate-slideup" : ""}`}
+      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+    >
       <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
         {answered ? (
           <div className="flex min-w-0 items-start gap-3">

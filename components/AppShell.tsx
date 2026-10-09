@@ -107,7 +107,10 @@ function Sidebar() {
 function MobileNav() {
   const pathname = usePathname();
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 flex justify-around border-t-2 border-grape-100 bg-white py-2 lg:hidden">
+    <nav
+      className="fixed inset-x-0 bottom-0 z-40 flex justify-around border-t-2 border-grape-100 bg-white pt-2 lg:hidden"
+      style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}
+    >
       {NAV.filter((n) => MOBILE_NAV.includes(n.href)).map((n) => (
         <Link
           key={n.href}

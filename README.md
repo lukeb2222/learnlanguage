@@ -76,6 +76,17 @@ Because the app is free for learners, the host pays for Claude API usage. To kee
 - Answers are checked locally first. Claude is only asked about typed translations that don't match an accepted answer.
 - Each learner has a daily AI request limit (`AI_DAILY_LIMIT`). Learners who reach it get a friendly message, and it resets at midnight UTC.
 
+## Try it without a server (hosted version)
+
+`npm run build:hosted` builds the same interface as one self-contained page, `artifact-dist/lingora.html`, which can be published as a Claude artifact:
+
+- It needs no API key. AI calls go through the artifact runtime's `sample` capability, so each learner uses their own Claude account.
+- `artifact/backend.ts` runs the same routes in the browser, reusing the game engine, prompts and grading. Accounts and progress are saved in that browser only.
+- Leagues and friends only include accounts created in the same browser.
+- Speaking exercises are turned off, because hosted pages can't use the microphone.
+
+The code lives in `artifact/`. Vite swaps the server-only modules and the Next.js navigation for in-browser versions, and nothing in the Next.js app changes.
+
 ## Architecture
 
 - **Next.js (App Router) + TypeScript + Tailwind.** All pages are in `app/`; shared UI is in `components/`.

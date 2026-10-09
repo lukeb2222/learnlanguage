@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { useUser } from "@/components/UserProvider";
 import { api } from "@/lib/client";
@@ -34,6 +35,7 @@ function Toggle({ label, desc, value, onChange }: { label: string; desc: string;
 function SettingsView() {
   const { user, action, setUser } = useUser();
   const router = useRouter();
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   if (!user) return null;
   const set = (s: Partial<Settings>) => action({ type: "settings", settings: s });
 
@@ -88,12 +90,16 @@ function SettingsView() {
                 )}
                 {Object.keys(user.courses).length > 1 && (
                   <button
-                    className="text-sm text-coral-500"
+                    className="text-sm font-semibold text-coral-500"
                     onClick={() => {
-                      if (confirm(`Remove your ${l.name} course? Progress will be lost.`)) void action({ type: "deleteCourse", courseId: c.languageId });
+                      if (confirmRemove === c.languageId) {
+                        setConfirmRemove(null);
+                        void action({ type: "deleteCourse", courseId: c.languageId });
+                      } else setConfirmRemove(c.languageId);
                     }}
+                    onBlur={() => setConfirmRemove(null)}
                   >
-                    Remove
+                    {confirmRemove === c.languageId ? "Tap again to remove" : "Remove"}
                   </button>
                 )}
               </div>

@@ -153,7 +153,7 @@ function StoryPlayer() {
       </div>
       <div ref={bottom} />
 
-      <div className="fixed inset-x-0 bottom-0 border-t-2 border-grape-100 bg-white p-4">
+      <div className="fixed inset-x-0 bottom-0 border-t-2 border-grape-100 bg-white p-4" style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}>
         <div className="mx-auto max-w-2xl">
           {shown < segs.length ? (
             <button className="btn btn-primary w-full" disabled={blocked} onClick={() => setShown(shown + 1)}>
